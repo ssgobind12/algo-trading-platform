@@ -8,13 +8,12 @@ const API_BASE = 'https://algo-trading-platform-jwu6.onrender.com';
 // Chart symbols organized by category
 const CHART_SYMBOLS: Record<string, { label: string; symbol: string }[]> = {
   "NSE Intraday": [
-    { label: "RELIANCE", symbol: "NSE:RELIANCE" },
-    { label: "TATA MOTORS", symbol: "NSE:TATAMOTORS" },
-    { label: "INFOSYS", symbol: "NSE:INFY" },
-    { label: "HDFC BANK", symbol: "NSE:HDFCBANK" },
-    { label: "TCS", symbol: "NSE:TCS" },
-    { label: "NIFTY 50", symbol: "NSE:NIFTY" },
-    { label: "BANK NIFTY", symbol: "NSE:BANKNIFTY" },
+    { label: "RELIANCE", symbol: "BSE:RELIANCE" },
+    { label: "TATA MOTORS", symbol: "BSE:TATAMOTORS" },
+    { label: "INFOSYS", symbol: "BSE:INFY" },
+    { label: "HDFC BANK", symbol: "BSE:HDFCBANK" },
+    { label: "TCS", symbol: "BSE:TCS" },
+    { label: "NIFTY 50", symbol: "BSE:SENSEX" }, // Proxy for Nifty for free real-time data
   ],
   "MCX Commodity": [
     { label: "GOLD", symbol: "MCX:GOLD1!" },
@@ -41,7 +40,7 @@ function TradingViewChart({ symbol }: { symbol: string }) {
     script.innerHTML = JSON.stringify({
       autosize: true,
       symbol: symbol,
-      interval: "5",
+      interval: "1", // Set to 1 minute for fastest possible updates
       timezone: "Asia/Kolkata",
       theme: "dark",
       style: "1",
@@ -76,7 +75,7 @@ export default function DashboardPage() {
   const [engineStatus, setEngineStatus] = useState("Stopped");
   const [engineMessage, setEngineMessage] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("NSE Intraday");
-  const [selectedSymbol, setSelectedSymbol] = useState("NSE:RELIANCE");
+  const [selectedSymbol, setSelectedSymbol] = useState("BSE:RELIANCE");
   const [selectedLabel, setSelectedLabel] = useState("RELIANCE");
   const ws = useRef<WebSocket | null>(null);
 
