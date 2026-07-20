@@ -1,34 +1,43 @@
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 
 def calculate_rsi(df: pd.DataFrame, length=14, close_col="close"):
-    return ta.rsi(df[close_col], length=length)
+    delta = df[close_col].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=length).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=length).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9, close_col="close"):
-    return ta.macd(df[close_col], fast=fast, slow=slow, signal=signal)
+    ema_fast = df[close_col].ewm(span=fast, adjust=False).mean()
+    ema_slow = df[close_col].ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    macd_df = pd.DataFrame()
+    macd_df[f"MACD_{fast}_{slow}_{signal}"] = macd_line
+    macd_df[f"MACDs_{fast}_{slow}_{signal}"] = signal_line
+    return macd_df
 
 def calculate_ema(df: pd.DataFrame, length=20, close_col="close"):
-    return ta.ema(df[close_col], length=length)
+    return df[close_col].ewm(span=length, adjust=False).mean()
 
 def calculate_vwap(df: pd.DataFrame, high_col="high", low_col="low", close_col="close", volume_col="volume"):
-    return ta.vwap(high=df[high_col], low=df[low_col], close=df[close_col], volume=df[volume_col])
+    q = df[volume_col]
+    p = (df[high_col] + df[low_col] + df[close_col]) / 3
+    return (p * q).cumsum() / q.cumsum()
 
 def calculate_atr(df: pd.DataFrame, length=14, high_col="high", low_col="low", close_col="close"):
-    return ta.atr(high=df[high_col], low=df[low_col], close=df[close_col], length=length)
-
-def calculate_supertrend(df: pd.DataFrame, length=7, multiplier=3.0, high_col="high", low_col="low", close_col="close"):
-    return ta.supertrend(high=df[high_col], low=df[low_col], close=df[close_col], length=length, multiplier=multiplier)
-
-def calculate_adx(df: pd.DataFrame, length=14, high_col="high", low_col="low", close_col="close"):
-    return ta.adx(high=df[high_col], low=df[low_col], close=df[close_col], length=length)
-
-def calculate_bollinger_bands(df: pd.DataFrame, length=20, std=2.0, close_col="close"):
-    return ta.bbands(df[close_col], length=length, std=std)
+    high_low = df[high_col] - df[low_col]
+    high_close = np.abs(df[high_col] - df[close_col].shift())
+    low_close = np.abs(df[low_col] - df[close_col].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    return true_range.rolling(window=length).mean()
 
 def append_all_indicators(df: pd.DataFrame):
-    df.ta.rsi(length=14, append=True)
-    df.ta.macd(fast=12, slow=26, signal=9, append=True)
-    df.ta.ema(length=20, append=True)
-    df.ta.vwap(append=True)
-    df.ta.atr(length=14, append=True)
+    df['RSI'] = calculate_rsi(df)
+    df['MACD'], df['MACD_SIGNAL'] = calculate_macd(df)
+    df['EMA_20'] = calculate_ema(df, 20)
+    df['VWAP'] = calculate_vwap(df)
+    df['ATR'] = calculate_atr(df)
     return df
