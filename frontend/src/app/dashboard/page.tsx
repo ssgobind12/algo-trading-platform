@@ -95,36 +95,45 @@ export default function DashboardPage() {
     const fetchHistory = async (retries = 3) => {
       for (let i = 0; i < retries; i++) {
         try {
-          setChartStatus(`Loading chart data... (attempt ${i + 1})`);
+          setChartStatus(i === 0 ? `Loading RELIANCE chart data...` : `Retrying... (attempt ${i + 1}/${retries})`);
           const res = await fetch(`${API_BASE}/kite/historical/RELIANCE`);
           
           if (!res.ok) {
-            const errText = await res.text();
-            console.error(`Chart fetch failed (${res.status}):`, errText);
+            const errData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+            console.error(`Chart fetch failed:`, errData);
             if (i < retries - 1) {
-              await new Promise(r => setTimeout(r, 3000));
+              setChartStatus(`Server warming up... retrying in 5s`);
+              await new Promise(r => setTimeout(r, 5000));
               continue;
             }
-            setChartStatus(`Server error: ${res.status}. Backend may be starting up...`);
+            setChartStatus(`Error: ${errData.detail || errData.message || 'Unknown error'}`);
             return;
           }
 
           const json = await res.json();
+          console.log("Chart API response:", json.status, "candles:", json.data?.length);
+          
           if (json.status === "success" && json.data && json.data.length > 0) {
             candlestickSeries.setData(json.data);
             chart.timeScale().fitContent();
             setChartStatus("");
             return;
           } else {
-            setChartStatus(json.message || "No data returned from server");
+            if (i < retries - 1) {
+              setChartStatus(`No data yet, retrying in 5s...`);
+              await new Promise(r => setTimeout(r, 5000));
+              continue;
+            }
+            setChartStatus(json.message || "No chart data available. Market may be closed.");
             return;
           }
         } catch (e) {
           console.error("Chart fetch error:", e);
           if (i < retries - 1) {
-            await new Promise(r => setTimeout(r, 3000));
+            setChartStatus(`Connection failed. Retrying in 5s...`);
+            await new Promise(r => setTimeout(r, 5000));
           } else {
-            setChartStatus("Backend is waking up (free tier). Please refresh in 30 seconds.");
+            setChartStatus("Backend is waking up (free tier cold start ~50s). Please refresh the page.");
           }
         }
       }

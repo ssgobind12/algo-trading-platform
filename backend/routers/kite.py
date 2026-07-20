@@ -54,43 +54,67 @@ def stop_engine():
 def get_historical_data(symbol: str):
     """Fetch 5 days of 5-minute candle data from Yahoo Finance for the given NSE symbol."""
     try:
+        import httpx
+        
         # Map Indian stocks appropriately for Yahoo Finance (.NS)
         ticker_symbol = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
         
         logger.info(f"Fetching historical data for {ticker_symbol}")
         
-        # Download data - yfinance returns multi-level columns for single ticker too
-        data = yf.download(ticker_symbol, period="5d", interval="5m", progress=False)
+        # Use Yahoo Finance chart API directly (more reliable than yfinance library)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker_symbol}"
+        params = {
+            "range": "5d",
+            "interval": "5m",
+            "includePrePost": "false"
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         
-        if data.empty:
+        async_client = httpx.Client(timeout=30.0)
+        response = async_client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        
+        chart_data = response.json()
+        result = chart_data.get("chart", {}).get("result", [])
+        
+        if not result:
             return {"status": "error", "message": f"No data found for {ticker_symbol}"}
         
-        # Flatten multi-level columns if present
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
+        timestamps = result[0].get("timestamp", [])
+        quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+        
+        opens = quotes.get("open", [])
+        highs = quotes.get("high", [])
+        lows = quotes.get("low", [])
+        closes = quotes.get("close", [])
         
         candles = []
-        for index, row in data.iterrows():
-            # Safely extract values - handle both Series and scalar
-            open_val = float(row['Open']) if not isinstance(row['Open'], pd.Series) else float(row['Open'].iloc[0])
-            high_val = float(row['High']) if not isinstance(row['High'], pd.Series) else float(row['High'].iloc[0])
-            low_val = float(row['Low']) if not isinstance(row['Low'], pd.Series) else float(row['Low'].iloc[0])
-            close_val = float(row['Close']) if not isinstance(row['Close'], pd.Series) else float(row['Close'].iloc[0])
+        for i in range(len(timestamps)):
+            o = opens[i] if i < len(opens) else None
+            h = highs[i] if i < len(highs) else None
+            l = lows[i] if i < len(lows) else None
+            c = closes[i] if i < len(closes) else None
             
-            # Skip NaN values
-            if any(np.isnan(v) for v in [open_val, high_val, low_val, close_val]):
+            # Skip if any value is None
+            if any(v is None for v in [o, h, l, c]):
                 continue
                 
             candles.append({
-                "time": int(index.timestamp()),
-                "open": round(open_val, 2),
-                "high": round(high_val, 2),
-                "low": round(low_val, 2),
-                "close": round(close_val, 2),
+                "time": timestamps[i],
+                "open": round(o, 2),
+                "high": round(h, 2),
+                "low": round(l, 2),
+                "close": round(c, 2),
             })
         
         logger.info(f"Returning {len(candles)} candles for {ticker_symbol}")
         return {"status": "success", "data": candles}
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Yahoo API HTTP error: {e.response.status_code}")
+        raise HTTPException(status_code=502, detail=f"Yahoo Finance API returned {e.response.status_code}")
     except Exception as e:
         logger.error(f"Historical data error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
