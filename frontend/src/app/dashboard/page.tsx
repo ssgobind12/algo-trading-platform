@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { createChart } from 'lightweight-charts';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -30,6 +31,69 @@ export default function DashboardPage() {
       ws.current?.close();
     };
   }, [router]);
+
+  // Chart setup
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const candlestickSeriesRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { color: 'transparent' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
+        horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
+    
+    chart.timeScale().fitContent();
+
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
+
+    candlestickSeriesRef.current = candlestickSeries;
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    // Fetch historical data
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch(`https://algo-trading-platform-jwu6.onrender.com/kite/historical/RELIANCE`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.status === "success") {
+            candlestickSeries.setData(json.data);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load historical data", e);
+      }
+    };
+    fetchHistory();
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, []);
 
   const toggleEngine = async () => {
     const token = localStorage.getItem('access_token');
@@ -83,9 +147,11 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 p-6 rounded-xl border border-secondary bg-secondary/30 shadow min-h-[400px]">
-          <h3 className="text-xl font-semibold mb-4 text-primary">Live Charts (TradingView)</h3>
-          <div className="w-full h-[300px] flex items-center justify-center border border-secondary/50 rounded bg-background/50">
-            <span className="text-foreground/50">WebSocket Connection Established. Waiting for ticks...</span>
+          <h3 className="text-xl font-semibold mb-4 text-primary">Live Charts (RELIANCE)</h3>
+          <div 
+            ref={chartContainerRef} 
+            className="w-full h-[400px] border border-secondary/50 rounded bg-background/50 overflow-hidden"
+          >
           </div>
         </div>
         <div className="p-6 rounded-xl border border-secondary bg-secondary/30 shadow">

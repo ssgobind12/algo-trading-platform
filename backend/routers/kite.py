@@ -40,3 +40,30 @@ def stop_engine():
         engine.stop()
         return {"status": "success", "message": "Live Trading Engine stopped."}
     return {"status": "info", "message": "Engine is not running."}
+
+import yfinance as yf
+import pandas as pd
+
+@router.get("/historical/{symbol}")
+def get_historical_data(symbol: str):
+    try:
+        # Map Indian stocks appropriately for Yahoo Finance (.NS)
+        ticker_symbol = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+        
+        # We only need it for the dashboard chart visual
+        data = yf.download(ticker_symbol, period="5d", interval="5m")
+        if data.empty:
+            return {"status": "error", "message": "No data found"}
+            
+        candles = []
+        for index, row in data.iterrows():
+            candles.append({
+                "time": int(index.timestamp()),
+                "open": float(row['Open'].iloc[0] if isinstance(row['Open'], pd.Series) else row['Open']),
+                "high": float(row['High'].iloc[0] if isinstance(row['High'], pd.Series) else row['High']),
+                "low": float(row['Low'].iloc[0] if isinstance(row['Low'], pd.Series) else row['Low']),
+                "close": float(row['Close'].iloc[0] if isinstance(row['Close'], pd.Series) else row['Close']),
+            })
+        return {"status": "success", "data": candles}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
