@@ -1,17 +1,83 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createChart, CandlestickSeries } from 'lightweight-charts';
 
 const API_BASE = 'https://algo-trading-platform-jwu6.onrender.com';
+
+// Chart symbols organized by category
+const CHART_SYMBOLS: Record<string, { label: string; symbol: string }[]> = {
+  "NSE Intraday": [
+    { label: "RELIANCE", symbol: "NSE:RELIANCE" },
+    { label: "TATA MOTORS", symbol: "NSE:TATAMOTORS" },
+    { label: "INFOSYS", symbol: "NSE:INFY" },
+    { label: "HDFC BANK", symbol: "NSE:HDFCBANK" },
+    { label: "TCS", symbol: "NSE:TCS" },
+    { label: "NIFTY 50", symbol: "NSE:NIFTY" },
+    { label: "BANK NIFTY", symbol: "NSE:BANKNIFTY" },
+  ],
+  "MCX Commodity": [
+    { label: "GOLD", symbol: "MCX:GOLD1!" },
+    { label: "SILVER", symbol: "MCX:SILVER1!" },
+    { label: "CRUDE OIL", symbol: "MCX:CRUDEOIL1!" },
+    { label: "NATURAL GAS", symbol: "MCX:NATURALGAS1!" },
+    { label: "COPPER", symbol: "MCX:COPPER1!" },
+  ],
+};
+
+function TradingViewChart({ symbol }: { symbol: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    if (!containerRef.current) return;
+    
+    // Clear previous widget
+    containerRef.current.innerHTML = '';
+    
+    const script = document.createElement('script');
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+    script.type = 'text/javascript';
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: symbol,
+      interval: "5",
+      timezone: "Asia/Kolkata",
+      theme: "dark",
+      style: "1",
+      locale: "en",
+      allow_symbol_change: false,
+      hide_top_toolbar: false,
+      hide_legend: false,
+      save_image: true,
+      calendar: false,
+      support_host: "https://www.tradingview.com",
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      gridColor: "rgba(42, 46, 57, 0.3)",
+      studies: [
+        "RSI@tv-basicstudies",
+        "MAExp@tv-basicstudies"
+      ],
+    });
+    
+    containerRef.current.appendChild(script);
+  }, [symbol]);
+  
+  return (
+    <div className="tradingview-widget-container" style={{ height: "100%", width: "100%" }}>
+      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
   const [trades, setTrades] = useState<any[]>([]);
   const [engineStatus, setEngineStatus] = useState("Stopped");
-  const [chartStatus, setChartStatus] = useState("Loading chart data...");
   const [engineMessage, setEngineMessage] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("NSE Intraday");
+  const [selectedSymbol, setSelectedSymbol] = useState("NSE:RELIANCE");
+  const [selectedLabel, setSelectedLabel] = useState("RELIANCE");
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -21,14 +87,10 @@ export default function DashboardPage() {
       return;
     }
 
-    // Connect WebSocket
+    // Connect WebSocket with auto-reconnect
     const connectWs = () => {
       ws.current = new WebSocket(`wss://algo-trading-platform-jwu6.onrender.com/ws`);
       
-      ws.current.onopen = () => {
-        console.log("WebSocket connected");
-      };
-
       ws.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'NEW_TRADE') {
@@ -36,12 +98,7 @@ export default function DashboardPage() {
         }
       };
 
-      ws.current.onerror = (err) => {
-        console.error("WebSocket error:", err);
-      };
-
       ws.current.onclose = () => {
-        console.log("WebSocket disconnected, reconnecting in 5s...");
         setTimeout(connectWs, 5000);
       };
     };
@@ -52,99 +109,6 @@ export default function DashboardPage() {
       ws.current?.close();
     };
   }, [router]);
-
-  // Chart setup
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
-
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: 400,
-      layout: {
-        background: { color: 'transparent' },
-        textColor: '#d1d4dc',
-      },
-      grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
-      },
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-      },
-    });
-    
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-    });
-
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    // Fetch historical data with retry
-    const fetchHistory = async (retries = 3) => {
-      for (let i = 0; i < retries; i++) {
-        try {
-          setChartStatus(i === 0 ? `Loading RELIANCE chart data...` : `Retrying... (attempt ${i + 1}/${retries})`);
-          const res = await fetch(`${API_BASE}/kite/historical/RELIANCE`);
-          
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-            console.error(`Chart fetch failed:`, errData);
-            if (i < retries - 1) {
-              setChartStatus(`Server warming up... retrying in 5s`);
-              await new Promise(r => setTimeout(r, 5000));
-              continue;
-            }
-            setChartStatus(`Error: ${errData.detail || errData.message || 'Unknown error'}`);
-            return;
-          }
-
-          const json = await res.json();
-          console.log("Chart API response:", json.status, "candles:", json.data?.length);
-          
-          if (json.status === "success" && json.data && json.data.length > 0) {
-            candlestickSeries.setData(json.data);
-            chart.timeScale().fitContent();
-            setChartStatus("");
-            return;
-          } else {
-            if (i < retries - 1) {
-              setChartStatus(`No data yet, retrying in 5s...`);
-              await new Promise(r => setTimeout(r, 5000));
-              continue;
-            }
-            setChartStatus(json.message || "No chart data available. Market may be closed.");
-            return;
-          }
-        } catch (e) {
-          console.error("Chart fetch error:", e);
-          if (i < retries - 1) {
-            setChartStatus(`Connection failed. Retrying in 5s...`);
-            await new Promise(r => setTimeout(r, 5000));
-          } else {
-            setChartStatus("Backend is waking up (free tier cold start ~50s). Please refresh the page.");
-          }
-        }
-      }
-    };
-    fetchHistory();
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-    };
-  }, []);
 
   const toggleEngine = async () => {
     const token = localStorage.getItem('access_token');
@@ -171,7 +135,6 @@ export default function DashboardPage() {
         setEngineMessage(data.detail || "Failed to toggle engine");
       }
       
-      // Clear message after 5 seconds
       setTimeout(() => setEngineMessage(""), 5000);
     } catch (err: any) {
       setEngineMessage("Network error. Backend may be waking up.");
@@ -184,13 +147,19 @@ export default function DashboardPage() {
     router.push('/');
   };
 
+  const handleSymbolChange = (category: string, symbol: string, label: string) => {
+    setSelectedCategory(category);
+    setSelectedSymbol(symbol);
+    setSelectedLabel(label);
+  };
+
   return (
     <div className="min-h-screen bg-background p-8">
       <header className="mb-8 flex justify-between items-center">
         <h1 className="text-3xl font-bold text-primary">Live Dashboard</h1>
         <div className="flex gap-4 items-center">
           {engineMessage && (
-            <span className="text-sm text-foreground/70 bg-secondary/50 px-3 py-1 rounded">
+            <span className="text-sm text-foreground/70 bg-secondary/50 px-3 py-1 rounded animate-pulse">
               {engineMessage}
             </span>
           )}
@@ -225,23 +194,46 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 p-6 rounded-xl border border-secondary bg-secondary/30 shadow min-h-[400px]">
-          <h3 className="text-xl font-semibold mb-4 text-primary">Live Charts (RELIANCE)</h3>
-          <div className="relative">
-            <div 
-              ref={chartContainerRef} 
-              className="w-full h-[400px] border border-secondary/50 rounded bg-background/50 overflow-hidden"
-            />
-            {chartStatus && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/80 rounded">
-                <div className="text-center">
-                  <div className="animate-pulse text-primary text-lg mb-2">📊</div>
-                  <span className="text-foreground/50">{chartStatus}</span>
+        <div className="lg:col-span-2 p-6 rounded-xl border border-secondary bg-secondary/30 shadow">
+          {/* Chart Header with Dropdown */}
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-semibold text-primary">
+              Live Chart — {selectedLabel}
+            </h3>
+            <div className="flex gap-2">
+              {Object.entries(CHART_SYMBOLS).map(([category, symbols]) => (
+                <div key={category} className="relative group">
+                  <button className={`px-3 py-1.5 text-sm rounded font-medium transition-colors ${
+                    selectedCategory === category 
+                      ? 'bg-primary text-background' 
+                      : 'bg-secondary/50 text-foreground/70 hover:bg-secondary'
+                  }`}>
+                    {category} ▾
+                  </button>
+                  <div className="absolute right-0 top-full mt-1 bg-secondary border border-secondary rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 min-w-[160px]">
+                    {symbols.map((s) => (
+                      <button
+                        key={s.symbol}
+                        onClick={() => handleSymbolChange(category, s.symbol, s.label)}
+                        className={`block w-full text-left px-4 py-2 text-sm hover:bg-primary/20 transition-colors first:rounded-t-lg last:rounded-b-lg ${
+                          selectedSymbol === s.symbol ? 'text-primary font-bold' : 'text-foreground/80'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
+          </div>
+          
+          {/* TradingView Chart */}
+          <div className="w-full h-[500px] border border-secondary/50 rounded bg-background/50 overflow-hidden">
+            <TradingViewChart symbol={selectedSymbol} />
           </div>
         </div>
+
         <div className="p-6 rounded-xl border border-secondary bg-secondary/30 shadow">
           <h3 className="text-xl font-semibold mb-4 text-primary">Recent Trades</h3>
           <ul className="space-y-4">
