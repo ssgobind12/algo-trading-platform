@@ -1,0 +1,32 @@
+//@version=6
+strategy("SS Gobind NSE Intraday", overlay=true, initial_capital=100000)
+
+// Inputs
+rsiLength = input.int(14, title="RSI Length")
+macdFast = input.int(12, title="MACD Fast")
+macdSlow = input.int(26, title="MACD Slow")
+macdSignal = input.int(9, title="MACD Signal")
+emaLength = input.int(20, title="EMA Length")
+
+// Indicators
+rsi = ta.rsi(close, rsiLength)
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+ema20 = ta.ema(close, emaLength)
+
+// Conditions
+rsiTurnedUp = rsi[1] < 30 and rsi > rsi[1]
+macdBullishCross = ta.crossover(macdLine, signalLine)
+priceAboveEma = close > ema20
+
+longCondition = rsiTurnedUp and macdBullishCross and priceAboveEma
+exitCondition = rsi > 70 or ta.crossunder(macdLine, signalLine)
+
+// Execution
+if (longCondition)
+    strategy.entry("Buy", strategy.long)
+    // Webhook Alert
+    alert('{"action": "buy", "symbol": "' + syminfo.tickerid + '", "strategy": "NSE Intraday", "price": ' + str.tostring(close) + '}', alert.freq_once_per_bar_close)
+
+if (exitCondition)
+    strategy.close("Buy")
+    alert('{"action": "sell", "symbol": "' + syminfo.tickerid + '", "strategy": "NSE Intraday", "price": ' + str.tostring(close) + '}', alert.freq_once_per_bar_close)
