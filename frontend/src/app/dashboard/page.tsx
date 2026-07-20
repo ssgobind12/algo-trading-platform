@@ -2,69 +2,159 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { createChart, ColorType, ISeriesApi } from 'lightweight-charts';
 
 const API_BASE = 'https://algo-trading-platform-jwu6.onrender.com';
 
 // Chart symbols organized by category
 const CHART_SYMBOLS: Record<string, { label: string; symbol: string }[]> = {
   "NSE Intraday": [
-    { label: "RELIANCE", symbol: "BSE:RELIANCE" },
-    { label: "TATA MOTORS", symbol: "BSE:TATAMOTORS" },
-    { label: "INFOSYS", symbol: "BSE:INFY" },
-    { label: "HDFC BANK", symbol: "BSE:HDFCBANK" },
-    { label: "TCS", symbol: "BSE:TCS" },
-    { label: "NIFTY 50", symbol: "BSE:SENSEX" }, // Proxy for Nifty for free real-time data
+    { label: "RELIANCE", symbol: "RELIANCE" },
+    { label: "TATA MOTORS", symbol: "TATAMOTORS" },
+    { label: "INFOSYS", symbol: "INFY" },
+    { label: "HDFC BANK", symbol: "HDFCBANK" },
+    { label: "TCS", symbol: "TCS" },
+    { label: "NIFTY 50", symbol: "NIFTY 50" },
+    { label: "BANK NIFTY", symbol: "NIFTY BANK" },
   ],
   "MCX Commodity": [
-    { label: "GOLD", symbol: "MCX:GOLD1!" },
-    { label: "SILVER", symbol: "MCX:SILVER1!" },
-    { label: "CRUDE OIL", symbol: "MCX:CRUDEOIL1!" },
-    { label: "NATURAL GAS", symbol: "MCX:NATURALGAS1!" },
-    { label: "COPPER", symbol: "MCX:COPPER1!" },
+    { label: "GOLD", symbol: "GOLD" },
+    { label: "SILVER", symbol: "SILVER" },
+    { label: "CRUDE OIL", symbol: "CRUDEOIL" },
   ],
 };
 
-function TradingViewChart({ symbol }: { symbol: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  
+function StreamingChart({ symbol, latestTick }: { symbol: string, latestTick: any }) {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const [status, setStatus] = useState("Initializing...");
+  const lastCandleRef = useRef<any>(null);
+
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!chartContainerRef.current) return;
     
-    // Clear previous widget
-    containerRef.current.innerHTML = '';
-    
-    const script = document.createElement('script');
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    script.type = 'text/javascript';
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
-      symbol: symbol,
-      interval: "1", // Set to 1 minute for fastest possible updates
-      timezone: "Asia/Kolkata",
-      theme: "dark",
-      style: "1",
-      locale: "en",
-      allow_symbol_change: false,
-      hide_top_toolbar: false,
-      hide_legend: false,
-      save_image: true,
-      calendar: false,
-      support_host: "https://www.tradingview.com",
-      backgroundColor: "rgba(0, 0, 0, 0)",
-      gridColor: "rgba(42, 46, 57, 0.3)",
-      studies: [
-        "RSI@tv-basicstudies",
-        "MAExp@tv-basicstudies"
-      ],
+    // Initialize chart
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
+        horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 500,
     });
     
-    containerRef.current.appendChild(script);
+    // Using a dynamic import for CandlestickSeries since next.js SSR struggles with it
+    let fallbackSeries = chart.addSeries(
+      // @ts-ignore
+      import('lightweight-charts').then(mod => mod.CandlestickSeries || undefined).catch(() => undefined) as any || Object
+    );
+    
+    // Fetch historical data
+    const fetchHistory = async (activeSeries: any) => {
+      setStatus(`Loading historical data for ${symbol}...`);
+      try {
+        const res = await fetch(`${API_BASE}/kite/historical/${symbol}`);
+        const json = await res.json();
+        
+        if (json.status === "success" && json.data?.length > 0) {
+          activeSeries.setData(json.data);
+          lastCandleRef.current = json.data[json.data.length - 1];
+          chart.timeScale().fitContent();
+          setStatus("");
+        } else {
+          setStatus(json.message || "No historical data found. Make sure Live Engine is running.");
+        }
+      } catch (err) {
+        setStatus("Failed to load historical data.");
+      }
+    };
+    
+    // In browser context we can safely apply options
+    if (typeof window !== 'undefined') {
+      import('lightweight-charts').then(mod => {
+        if (mod.CandlestickSeries) {
+          chart.removeSeries(fallbackSeries);
+          const realSeries = chart.addSeries(mod.CandlestickSeries, {
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+          });
+          seriesRef.current = realSeries;
+          fetchHistory(realSeries); // Fetch after series is created properly
+        }
+      });
+    }
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
   }, [symbol]);
-  
+
+  // Update chart when a new tick arrives
+  useEffect(() => {
+    if (!seriesRef.current || !latestTick || !lastCandleRef.current) return;
+    
+    const price = latestTick.price;
+    const tickTime = latestTick.time; // Unix timestamp
+    const lastCandle = lastCandleRef.current;
+    
+    // We are using 1-minute candles (60 seconds)
+    // If the tick is within the same minute as the last candle, update it
+    const candleMinute = Math.floor(lastCandle.time / 60) * 60;
+    const tickMinute = Math.floor(tickTime / 60) * 60;
+    
+    if (tickMinute === candleMinute || tickTime < candleMinute + 60) {
+      // Update current candle
+      const updatedCandle = {
+        time: lastCandle.time as import('lightweight-charts').Time,
+        open: lastCandle.open,
+        high: Math.max(lastCandle.high, price),
+        low: Math.min(lastCandle.low, price),
+        close: price
+      };
+      seriesRef.current.update(updatedCandle);
+      lastCandleRef.current = updatedCandle;
+    } else {
+      // Create new candle
+      const newCandle = {
+        time: tickMinute as import('lightweight-charts').Time,
+        open: price,
+        high: price,
+        low: price,
+        close: price
+      };
+      seriesRef.current.update(newCandle);
+      lastCandleRef.current = newCandle;
+    }
+  }, [latestTick]);
+
   return (
-    <div className="tradingview-widget-container" style={{ height: "100%", width: "100%" }}>
-      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
+    <div className="relative w-full h-[500px]">
+      {status && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10 text-primary font-medium">
+          {status}
+        </div>
+      )}
+      <div ref={chartContainerRef} className="w-full h-full" />
     </div>
   );
 }
@@ -75,8 +165,9 @@ export default function DashboardPage() {
   const [engineStatus, setEngineStatus] = useState("Stopped");
   const [engineMessage, setEngineMessage] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("NSE Intraday");
-  const [selectedSymbol, setSelectedSymbol] = useState("BSE:RELIANCE");
+  const [selectedSymbol, setSelectedSymbol] = useState("RELIANCE");
   const [selectedLabel, setSelectedLabel] = useState("RELIANCE");
+  const [latestTick, setLatestTick] = useState<any>(null);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -94,6 +185,10 @@ export default function DashboardPage() {
         const data = JSON.parse(event.data);
         if (data.type === 'NEW_TRADE') {
           setTrades(prev => [data, ...prev].slice(0, 50));
+        } else if (data.type === 'NEW_TICK') {
+          // In a real app we would map the instrument token back to the symbol.
+          // For simplicity, we just pass the tick down and let the chart update if it's running.
+          setLatestTick(data);
         }
       };
 
@@ -197,11 +292,11 @@ export default function DashboardPage() {
           {/* Chart Header with Dropdown */}
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-xl font-semibold text-primary">
-              Live Chart — {selectedLabel}
+              Live Streaming Chart — {selectedLabel}
             </h3>
             <div className="flex gap-2">
               {Object.entries(CHART_SYMBOLS).map(([category, symbols]) => (
-                <div key={category} className="relative group">
+                <div key={category} className="relative group z-50">
                   <button className={`px-3 py-1.5 text-sm rounded font-medium transition-colors ${
                     selectedCategory === category 
                       ? 'bg-primary text-background' 
@@ -227,9 +322,9 @@ export default function DashboardPage() {
             </div>
           </div>
           
-          {/* TradingView Chart */}
+          {/* Custom Lightweight Chart */}
           <div className="w-full h-[500px] border border-secondary/50 rounded bg-background/50 overflow-hidden">
-            <TradingViewChart symbol={selectedSymbol} />
+            <StreamingChart symbol={selectedSymbol} latestTick={latestTick} />
           </div>
         </div>
 

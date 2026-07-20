@@ -42,6 +42,28 @@ class LiveEngine:
     def on_ticks(self, ws, ticks):
         for tick in ticks:
             token = tick['instrument_token']
+            
+            # Broadcast raw tick to frontend for real-time charts
+            try:
+                import asyncio
+                from backend.routers.ws import manager
+                # Send minimal tick data
+                tick_data = {
+                    "type": "NEW_TICK",
+                    "token": token,
+                    "price": tick['last_price'],
+                    "time": int(datetime.now().timestamp())
+                }
+                # Create a new event loop for this thread if needed or use run
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                loop.run_until_complete(manager.broadcast(tick_data))
+            except Exception as e:
+                logger.error(f"Failed to broadcast tick: {str(e)}")
+
             if token in self.historical_data:
                 # Mock updating the candle dataframe with new tick data for simplicity
                 df = self.historical_data[token]

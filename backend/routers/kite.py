@@ -52,69 +52,71 @@ def stop_engine():
 
 @router.get("/historical/{symbol}")
 def get_historical_data(symbol: str):
-    """Fetch 5 days of 5-minute candle data from Yahoo Finance for the given NSE symbol."""
+    """Fetch historical 1-minute candle data directly from Zerodha Kite for the given symbol."""
     try:
-        import httpx
+        from backend.services.kite import get_kite_instance
+        from datetime import datetime, timedelta
         
-        # Map Indian stocks appropriately for Yahoo Finance (.NS)
-        ticker_symbol = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+        kite = get_kite_instance()
         
-        logger.info(f"Fetching historical data for {ticker_symbol}")
-        
-        # Use Yahoo Finance chart API directly (more reliable than yfinance library)
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker_symbol}"
-        params = {
-            "range": "5d",
-            "interval": "5m",
-            "includePrePost": "false"
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        async_client = httpx.Client(timeout=30.0)
-        response = async_client.get(url, params=params, headers=headers)
-        response.raise_for_status()
-        
-        chart_data = response.json()
-        result = chart_data.get("chart", {}).get("result", [])
-        
-        if not result:
-            return {"status": "error", "message": f"No data found for {ticker_symbol}"}
-        
-        timestamps = result[0].get("timestamp", [])
-        quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
-        
-        opens = quotes.get("open", [])
-        highs = quotes.get("high", [])
-        lows = quotes.get("low", [])
-        closes = quotes.get("close", [])
-        
-        candles = []
-        for i in range(len(timestamps)):
-            o = opens[i] if i < len(opens) else None
-            h = highs[i] if i < len(highs) else None
-            l = lows[i] if i < len(lows) else None
-            c = closes[i] if i < len(closes) else None
+        # We need the user's access token from the request header in a real app,
+        # but for this demo, we'll try to use the stored global one if available.
+        if not kite.access_token:
+            return {"status": "error", "message": "Live Engine not started (missing access token for historical data)"}
             
-            # Skip if any value is None
-            if any(v is None for v in [o, h, l, c]):
-                continue
-                
-            candles.append({
-                "time": timestamps[i],
-                "open": round(o, 2),
-                "high": round(h, 2),
-                "low": round(l, 2),
-                "close": round(c, 2),
-            })
+        # 1. Lookup instrument token dynamically
+        instruments = kite.instruments(kite.EXCHANGE_NSE)
         
-        logger.info(f"Returning {len(candles)} candles for {ticker_symbol}")
+        # Strip BSE/NSE prefixes if frontend sent them (e.g. BSE:RELIANCE -> RELIANCE)
+        clean_symbol = symbol.split(':')[-1] if ':' in symbol else symbol
+        
+        instrument_token = None
+        for inst in instruments:
+            if inst['tradingsymbol'] == clean_symbol:
+                instrument_token = inst['instrument_token']
+                break
+                
+        if not instrument_token:
+            return {"status": "error", "message": f"Could not find instrument token for {clean_symbol}"}
+            
+        logger.info(f"Fetching Zerodha historical data for {clean_symbol} (Token: {instrument_token})")
+        
+        # 2. Fetch 5 days of 1-minute data
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=5)
+        
+        records = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=from_date.strftime('%Y-%m-%d 00:00:00'),
+            to_date=to_date.strftime('%Y-%m-%d 23:59:59'),
+            interval="minute", # 1-minute interval for maximum precision
+            continuous=False,
+            oi=False
+        )
+        
+        if not records:
+            return {"status": "error", "message": f"No historical data returned for {clean_symbol}"}
+        
+        # 3. Format for lightweight-charts
+        candles = []
+        for r in records:
+            # r['date'] is a datetime object
+            timestamp = int(r['date'].timestamp())
+            candles.append({
+                "time": timestamp,
+                "open": round(r['open'], 2),
+                "high": round(r['high'], 2),
+                "low": round(r['low'], 2),
+                "close": round(r['close'], 2),
+            })
+            
+        logger.info(f"Returning {len(candles)} 1-min candles for {clean_symbol}")
         return {"status": "success", "data": candles}
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Yahoo API HTTP error: {e.response.status_code}")
-        raise HTTPException(status_code=502, detail=f"Yahoo Finance API returned {e.response.status_code}")
+        
     except Exception as e:
-        logger.error(f"Historical data error: {str(e)}")
+        logger.error(f"Zerodha Historical data error: {str(e)}")
+        # Check for 403 Data Exception (missing subscription)
+        if "DataException" in str(type(e)):
+             return {"status": "error", "message": "Zerodha Historical Data API add-on required."}
         raise HTTPException(status_code=500, detail=str(e))
 
