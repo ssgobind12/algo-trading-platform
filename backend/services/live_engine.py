@@ -1,6 +1,11 @@
 from kiteconnect import KiteTicker
 from backend.config import settings
 import logging
+from backend.strategies.nse_intraday import NSEIntradayStrategy
+from backend.strategies.mcx_gold import MCXGoldStrategy
+from backend.services.kite import get_kite_instance
+import pandas as pd
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +18,107 @@ class LiveEngine:
         self.kws.on_error = self.on_error
         self.kws.on_reconnect = self.on_reconnect
         self.kws.on_noreconnect = self.on_noreconnect
-        self.subscribers = [] 
+        self.kite = get_kite_instance()
+        self.kite.set_access_token(access_token)
+        
+        # Initialize strategies
+        self.strategies = [
+            NSEIntradayStrategy(),
+            MCXGoldStrategy()
+        ]
+        
+        # Subscriptions
+        self.tokens_to_strategies = {}
+        
+        # Historical data for candles
+        self.historical_data = {}
+
+    def start(self):
+        self.kws.connect(threaded=True)
+
+    def stop(self):
+        self.kws.close()
 
     def on_ticks(self, ws, ticks):
-        pass
+        for tick in ticks:
+            token = tick['instrument_token']
+            if token in self.historical_data:
+                # Mock updating the candle dataframe with new tick data for simplicity
+                df = self.historical_data[token]
+                new_row = pd.DataFrame([{
+                    'date': datetime.now(),
+                    'open': tick['last_price'],
+                    'high': tick['last_price'],
+                    'low': tick['last_price'],
+                    'close': tick['last_price'],
+                    'volume': tick.get('volume_traded', 0)
+                }])
+                self.historical_data[token] = pd.concat([df, new_row], ignore_index=True)
+                
+                # Check strategies
+                for strategy in self.tokens_to_strategies.get(token, []):
+                    action = strategy.on_candle(self.historical_data[token])
+                    if action in ["BUY", "SELL"]:
+                        self.execute_order(strategy.symbol, action)
+
+    def execute_order(self, symbol, transaction_type):
+        try:
+            logger.info(f"Executing {transaction_type} for {symbol}")
+            order_id = self.kite.place_order(
+                tradingsymbol=symbol,
+                exchange=self.kite.EXCHANGE_NSE,
+                transaction_type=transaction_type,
+                quantity=1,
+                variety=self.kite.VARIETY_REGULAR,
+                order_type=self.kite.ORDER_TYPE_MARKET,
+                product=self.kite.PRODUCT_MIS,
+                validity=self.kite.VALIDITY_DAY
+            )
+            logger.info(f"Order placed: {order_id}")
+            
+            # Save to Database
+            from backend.database import SessionLocal
+            from backend.models.trade import Trade, TradeSide, TradeStatus
+            db = SessionLocal()
+            trade = Trade(
+                user_id=1, # Default admin user
+                strategy_id=1, 
+                symbol=symbol,
+                side=TradeSide.BUY if transaction_type == "BUY" else TradeSide.SELL,
+                quantity=1,
+                entry_price=0.0, # Will be updated by Kite webhook later
+                status=TradeStatus.OPEN
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            db.close()
+
+            # Broadcast via WebSocket
+            import asyncio
+            from backend.routers.ws import manager
+            asyncio.run(manager.broadcast({
+                "type": "NEW_TRADE",
+                "symbol": symbol,
+                "side": transaction_type,
+                "quantity": 1
+            }))
+        except Exception as e:
+            logger.error(f"Order failed: {str(e)}")
 
     def on_connect(self, ws, response):
         logger.info("Successfully connected to Kite WebSocket")
+        # Example token for Reliance = 738561
+        tokens = [738561]
+        ws.subscribe(tokens)
+        ws.set_mode(ws.MODE_FULL, tokens)
+        
+        # Map tokens to strategies
+        self.tokens_to_strategies[738561] = [self.strategies[0]]
+        
+        # Fetch initial historical data to seed the DataFrame
+        # In a real app, you would fetch from kite.historical_data
+        self.historical_data[738561] = pd.DataFrame(columns=['date', 'open', 'high', 'low', 'close', 'volume'])
 
     def on_close(self, ws, code, reason):
         logger.warning(f"Connection closed: {code} - {reason}")
@@ -33,5 +132,11 @@ class LiveEngine:
     def on_noreconnect(self, ws):
         logger.error("Reconnecting failed")
 
-    def connect(self):
-        self.kws.connect(threaded=True)
+# Global engine instance
+_engine = None
+
+def get_engine(access_token=None):
+    global _engine
+    if _engine is None and access_token:
+        _engine = LiveEngine(access_token)
+    return _engine

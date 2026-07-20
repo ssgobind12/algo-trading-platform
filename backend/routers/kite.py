@@ -21,3 +21,22 @@ def generate_session(request_token: str):
         return {"access_token": data["access_token"], "public_token": data["public_token"]}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+from backend.services.live_engine import get_engine
+
+@router.post("/start_engine")
+def start_engine(access_token: str):
+    engine = get_engine(access_token)
+    try:
+        engine.start()
+        return {"status": "success", "message": "Live Trading Engine started."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/stop_engine")
+def stop_engine():
+    engine = get_engine()
+    if engine:
+        engine.stop()
+        return {"status": "success", "message": "Live Trading Engine stopped."}
+    return {"status": "info", "message": "Engine is not running."}
