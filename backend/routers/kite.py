@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from backend.services.kite import get_kite_instance
 from backend.config import settings
 from kiteconnect import KiteConnect
@@ -51,13 +51,18 @@ def stop_engine():
     return {"status": "info", "message": "Engine is not running."}
 
 @router.get("/historical/{symbol}")
-def get_historical_data(symbol: str):
+def get_historical_data(symbol: str, request: Request):
     """Fetch historical 1-minute candle data directly from Zerodha Kite for the given symbol."""
     try:
         from backend.services.kite import get_kite_instance
         from datetime import datetime, timedelta
         
         kite = get_kite_instance()
+        
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            kite.set_access_token(token)
         
         # We need the user's access token from the request header in a real app,
         # but for this demo, we'll try to use the stored global one if available.

@@ -67,7 +67,10 @@ function StreamingChart({ symbol, latestTick }: { symbol: string, latestTick: an
     const fetchHistory = async () => {
       setStatus(`Loading historical data for ${symbol}...`);
       try {
-        const res = await fetch(`${API_BASE}/kite/historical/${symbol}`);
+        const token = localStorage.getItem('access_token');
+        const headers: HeadersInit = token ? { 'Authorization': `Bearer ${token}` } : {};
+        
+        const res = await fetch(`${API_BASE}/kite/historical/${symbol}`, { headers });
         const json = await res.json();
         
         if (json.status === "success" && json.data?.length > 0) {
