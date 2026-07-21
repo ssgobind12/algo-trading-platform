@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createChart, ColorType, ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, ISeriesApi, CandlestickSeries } from 'lightweight-charts';
 
 const API_BASE = 'https://algo-trading-platform-jwu6.onrender.com';
 
@@ -52,21 +52,26 @@ function StreamingChart({ symbol, latestTick }: { symbol: string, latestTick: an
       height: 500,
     });
     
-    // Using a dynamic import for CandlestickSeries since next.js SSR struggles with it
-    let fallbackSeries = chart.addSeries(
-      // @ts-ignore
-      import('lightweight-charts').then(mod => mod.CandlestickSeries || undefined).catch(() => undefined) as any || Object
-    );
+    // Create the Candlestick Series directly (v5 style)
+    const series = chart.addSeries(CandlestickSeries, {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
     
+    seriesRef.current = series;
+
     // Fetch historical data
-    const fetchHistory = async (activeSeries: any) => {
+    const fetchHistory = async () => {
       setStatus(`Loading historical data for ${symbol}...`);
       try {
         const res = await fetch(`${API_BASE}/kite/historical/${symbol}`);
         const json = await res.json();
         
         if (json.status === "success" && json.data?.length > 0) {
-          activeSeries.setData(json.data);
+          series.setData(json.data);
           lastCandleRef.current = json.data[json.data.length - 1];
           chart.timeScale().fitContent();
           setStatus("");
@@ -78,23 +83,7 @@ function StreamingChart({ symbol, latestTick }: { symbol: string, latestTick: an
       }
     };
     
-    // In browser context we can safely apply options
-    if (typeof window !== 'undefined') {
-      import('lightweight-charts').then(mod => {
-        if (mod.CandlestickSeries) {
-          chart.removeSeries(fallbackSeries);
-          const realSeries = chart.addSeries(mod.CandlestickSeries, {
-            upColor: '#26a69a',
-            downColor: '#ef5350',
-            borderVisible: false,
-            wickUpColor: '#26a69a',
-            wickDownColor: '#ef5350',
-          });
-          seriesRef.current = realSeries;
-          fetchHistory(realSeries); // Fetch after series is created properly
-        }
-      });
-    }
+    fetchHistory();
 
     const handleResize = () => {
       if (chartContainerRef.current) {
